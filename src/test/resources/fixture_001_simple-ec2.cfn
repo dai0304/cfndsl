@@ -1,0 +1,8 @@
+cloudFormation {
+	resources {
+		ec2Instance("HogeInstance") {
+			instanceType "t1.micro"
+			imageId "ami-3561fe34"
+		}
+	}
+}

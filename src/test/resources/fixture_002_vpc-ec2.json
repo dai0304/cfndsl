@@ -1,0 +1,46 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "VPC" : {
+      "Type" : "AWS::EC2::VPC",
+      "Properties" : {
+        "CidrBlock" : "10.0.0.0/16",
+        "InstanceTenancy" : "default"
+      }
+    },
+    "InternetGateway" : {
+      "Type" : "AWS::EC2::InternetGateway"
+    },
+    "AttachGateway" : {
+      "Type" : "AWS::EC2::VPCGatewayAttachment",
+      "Properties" : {
+        "VpcId" : { "Ref" : "VPC" },
+        "InternetGatewayId" : { "Ref" : "InternetGateway" }
+      }
+    },
+    "Subnet": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": { "Ref": "VPC" },
+        "AvailabilityZone": "ap-northeast-1a",
+        "CidrBlock": "10.0.0.0/24"
+      }
+    },
+    "HogeInstanceEIP": {
+      "Type": "AWS::EC2::EIP",
+      "DependsOn" : "AttachGateway",
+      "Properties": {
+        "Domain": "vpc",
+        "InstanceId": { "Ref": "HogeInstance" }
+      }
+    },
+    "HogeInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "InstanceType": "t1.micro",
+        "ImageId": "ami-3561fe34",
+        "SubnetId": { "Ref" : "Subnet" }
+      }
+    }
+  }
+}

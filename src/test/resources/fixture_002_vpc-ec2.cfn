@@ -1,0 +1,27 @@
+cloudFormation {
+	resources {
+		ec2Vpc("VPC") {
+			cidrBlock "10.0.0.0/16"
+			instanceTenancy "default"
+		}
+		ec2InternetGateway("InternetGateway")
+		ec2VPCGatewayAttachment("AttachGateway") {
+			vpcId ref("VPC")
+			internetGatewayId ref("InternetGateway")
+		}
+		ec2Subnet("Subnet") {
+			vpcId ref("VPC")
+			availabilityZone "ap-northeast-1a"
+			cidrBlock "10.0.0.0/24"
+		}
+		ec2EIP(name: "HogeInstanceEIP", dependsOn: "AttachGateway") {
+			domain "vpc"
+			instanceId ref("HogeInstance")
+		}
+		ec2Instance("HogeInstance") {
+			instanceType "t1.micro"
+			imageId "ami-3561fe34"
+			subnetId ref("Subnet")
+		}
+	}
+}
