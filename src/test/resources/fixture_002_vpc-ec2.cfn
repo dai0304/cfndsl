@@ -1,27 +1,37 @@
-cloudFormation {
-	resources {
-		ec2Vpc("VPC") {
-			cidrBlock "10.0.0.0/16"
-			instanceTenancy "default"
+CloudFormation {
+	Resources {
+		VPC(type: "AWS::EC2::VPC") {
+			Properties {
+				CidrBlock = "10.0.0.0/16"
+				InstanceTenancy = "default"
+			}
 		}
-		ec2InternetGateway("InternetGateway")
-		ec2VPCGatewayAttachment("AttachGateway") {
-			vpcId ref("VPC")
-			internetGatewayId ref("InternetGateway")
+		InternetGateway(type: "AWS::EC2::InternetGateway")
+		AttachGateway("AWS::EC2::VPCGatewayAttachment") {
+			Properties {
+				VpcId = ref("VPC")
+				InternetGatewayId = ref("InternetGateway")
+			}
 		}
-		ec2Subnet("Subnet") {
-			vpcId ref("VPC")
-			availabilityZone "ap-northeast-1a"
-			cidrBlock "10.0.0.0/24"
+		Subnet("AWS::EC2::Subnet") {
+			Properties {
+				VpcId = ref("VPC")
+				AvailabilityZone = "ap-northeast-1a"
+				CidrBlock = "10.0.0.0/24"
+			}
 		}
-		ec2EIP(name: "HogeInstanceEIP", dependsOn: "AttachGateway") {
-			domain "vpc"
-			instanceId ref("HogeInstance")
+		HogeInstanceEIP(type: "AWS::EC2::EIP", dependsOn: "AttachGateway") {
+			Properties {
+				Domain = "vpc"
+				InstanceId = ref("HogeInstance")
+			}
 		}
-		ec2Instance("HogeInstance") {
-			instanceType "t1.micro"
-			imageId "ami-3561fe34"
-			subnetId ref("Subnet")
+		HogeInstance("AWS::EC2::Instance") {
+			Properties {
+				InstanceType = "t1.micro"
+				ImageId = "ami-3561fe34"
+				SubnetId = ref("Subnet")
+			}
 		}
 	}
 }

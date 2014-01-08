@@ -1,0 +1,476 @@
+cloudFormation {
+  description "Portnoy personal environment template"
+  
+  parameters {
+    KeyName = keyName() // よくあるparameter設定はメソッドで一発設定
+    DBUsername = dbUsername("admin")
+    DBPassword = dbPassword()
+    HostedZone {
+      description "The DNS name of an existing Amazon Route 53 hosted zone"
+      default "members.classmethod.info"
+      type "String"
+    }
+    DeveloperIP {
+      description "The IP address for developer"
+      default "210.189.104.105"
+      type "String"
+    }
+  }
+  
+  mappings {
+    AWSNATAMI = natAmi() // よくあるmapping設定
+    AWSAmazonLinuxAMI = amazonLinuxAmi()
+    AZ [
+      "us-east-1":      [ "primary": "us-east-1d",      "secondary": "us-east-1a" ],
+      "us-west-2":      [ "primary": "us-west-2a",      "secondary": "us-west-2b" ],
+      "us-west-1":      [ "primary": "us-west-1a",      "secondary": "us-west-1b" ],
+      "eu-west-1":      [ "primary": "eu-west-1a",      "secondary": "eu-west-1b" ],
+      "ap-southeast-1": [ "primary": "ap-southeast-1a", "secondary": "ap-southeast-1b" ],
+      "ap-southeast-2": [ "primary": "ap-southeast-2a", "secondary": "ap-southeast-2b" ],
+      "ap-northeast-1": [ "primary": "ap-northeast-1a", "secondary": "ap-northeast-1c" ],
+      "sa-east-1":      [ "primary": "sa-east-1a",      "secondary": "sa-east-1b" ]
+    ]
+    StackConfig [
+      "VPC"               : [ "CIDR" : "10.0.0.0/16" ],
+      "FrontendSubnet1"   : [ "CIDR" : "10.0.0.0/24" ],
+      "FrontendSubnet2"   : [ "CIDR" : "10.0.1.0/24" ],
+      "ApplicationSubnet1": [ "CIDR" : "10.0.2.0/24" ],
+      "ApplicationSubnet2": [ "CIDR" : "10.0.3.0/24" ],
+      "DatabaseSubnet1"   : [ "CIDR" : "10.0.4.0/24" ],
+      "DatabaseSubnet2"   : [ "CIDR" : "10.0.5.0/24" ],
+      "NATServer"    : [ "InstanceType" : "t1.micro" ],
+      "BastionServer": [ "InstanceType" : "t1.micro" ],
+      "DBServer"     : [ "InstanceType" : "db.m1.small", "AllocatedStorage" : "50", "DBName" : "portnoy" ]
+    ]
+  }
+  
+  resources {
+    PowerUserRole(AWSIAMRole) {
+      AssumeRolePolicyDocument = """{
+        "Statement": [ {
+          "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+        } ]
+      }"""
+      Path = "/"
+      Policies = [ """{
+        "PolicyName" : "PowerUserPolicy",
+        "PolicyDocument" : {
+          "Statement": [ {
+            "Sid": "PowerUserStmt",
+            "Effect": "Allow",
+            "NotAction": "iam:*",
+            "Resource": "*"
+          } ]
+        }
+      }""" ]
+    }
+    PowerUserProfile(AWSIAMInstanceProfile) {
+      Path = "/"
+      Roles = [ ref("PowerUserRole") ]
+    }
+
+    VPC(AWSEC2VPC) {
+      CidrBlock = refMap("StackConfig", "VPC", "CIDR")
+      InstanceTenancy = "default"
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    InternetGateway(AWSEC2InternetGateway) {
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    AttachGateway(AWSEC2VPCGatewayAttachment) {
+      VpcId = ref("VPC")
+      InternetGatewayId = ref("InternetGateway")
+    }
+
+    PublicRouteTable(type: AWSEC2RouteTable, dependsOn "AttachGateway") {
+      VpcId = ref("VPC")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    ProtectedRouteTable(AWSEC2RouteTable) {
+      VpcId = ref("VPC")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Protected",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    PublicRoute(AWSEC2Route) {
+      RouteTableId = ref("PublicRouteTable")
+      DestinationCidrBlock = "0.0.0.0/0"
+      GatewayId = ref("InternetGateway")
+    }
+    ProtectedRoute(AWSEC2Route) {
+      RouteTableId = ref("ProtectedRouteTable")
+      DestinationCidrBlock = "0.0.0.0/0"
+      InstanceId = ref("NATInstance")
+    }
+
+    FrontendSubnet1(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      AvailabilityZone = refMap("AZ", ref("AWS::Region"), "primary")
+      CidrBlock = refMap("StackConfig", "FrontendSubnet1", "CIDR")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    FrontendSubnet2(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      AvailabilityZone = refMap("AZ", ref("AWS::Region"), "secondary")
+      CidrBlock = refMap("StackConfig", "FrontendSubnet2", "CIDR")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    ApplicationSubnet1(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      AvailabilityZone = refMap("AZ", ref("AWS::Region"), "primary")
+      CidrBlock = refMap("StackConfig", "ApplicationSubnet1", "CIDR")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Public",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    ApplicationSubnet2(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      AvailabilityZone = refMap("AZ", ref("AWS::Region"), "secondary")
+      CidrBlock = refMap("StackConfig", "ApplicationSubnet2", "CIDR")
+      Tags = [
+        Application: ref("AWS::StackId"),
+        Network: "Protected",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    DatabaseSubnet1(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      CidrBlock = refMap("StackConfig", "DatabaseSubnet1", "CIDR")
+      AvailabilityZone = refMap("AZ", region(), "primary") // region() == ref("AWS::Region")
+      Tags = [
+        Application: stackId(),
+        Network: "Protected",
+        CmBillingGroup: "CMP"
+      ]
+    }
+    DatabaseSubnet2(AWSEC2Subnet) {
+      VpcId = ref("VPC")
+      CidrBlock = refMap("StackConfig", "DatabaseSubnet2", "CIDR")
+      AvailabilityZone = refMap("AZ", region(), "secondary")
+      Tags = [
+        Application: stackId(), // stackId() == ref("AWS::StackId")
+        Network: "Protected",
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+//    FrontendSubnet1RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("FrontendSubnet1")
+//      RouteTableId = ref("PublicRouteTable")
+//    }
+//    FrontendSubnet2RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("FrontendSubnet2")
+//      RouteTableId = ref("PublicRouteTable")
+//    }
+//    ApplicationSubnet1RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("ApplicationSubnet1")
+//      RouteTableId = ref("PublicRouteTable")
+//    }
+//    ApplicationSubnet2RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("ApplicationSubnet2")
+//      RouteTableId = ref("ProtectedRouteTable")
+//    }
+//    DatabaseSubnet1RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("DatabaseSubnet1")
+//      RouteTableId = ref("ProtectedRouteTable")
+//    }
+//    DatabaseSubnet2RouteTableAssociation(AWSEC2SubnetRouteTableAssociation) {
+//      SubnetId = ref("DatabaseSubnet2")
+//      RouteTableId = ref("ProtectedRouteTable")
+//    }
+    [
+      "FrontendSubnet1": "PublicRouteTable",
+      "FrontendSubnet2": "PublicRouteTable",
+      "ApplicationSubnet1": "ProtectedRouteTable",
+      "ApplicationSubnet2": "ProtectedRouteTable",
+      "DatabaseSubnet1": "ProtectedRouteTable",
+      "DatabaseSubnet2": "ProtectedRouteTable"
+    ].each { k, v ->
+      "${k}RouteTableAssociation"(AWSEC2SubnetRouteTableAssociation) {
+        SubnetId = ref(k)
+        RouteTableId = ref(v)
+      }
+    }
+
+
+    VPCDefaultSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Allow all communications in VPC"
+      SecurityGroupIngress = [
+        tcp(0, 65535, refMap("StackConfig", "VPC", "CIDR"))
+        udp(0, 65535, refMap("StackConfig", "VPC", "CIDR"))
+        icmp(refMap("StackConfig", "VPC", "CIDR"))
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+    SSHSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Enable SSH access via port 22"
+      SecurityGroupIngress = [
+        tcp(22, 22, "59.146.77.152/32"),
+        tcp(22, 22, "202.213.251.236/32"),
+        tcp(22, 22, join("", [ ref("DeveloperIP"), "/32" ]))
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+    NATSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Enable internal access to the NAT device"
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+    PublicWebSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Public ELB Security Group with HTTP access on port 443 from the internet"
+      SecurityGroupIngress = [
+        tcp(80, 80, "0.0.0.0/0"),
+        tcp(443, 443, "0.0.0.0/0")
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+    ProtectedWebSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Protected ELB Security Group with HTTP access on port 80/443 from the family part of the internet"
+      SecurityGroupIngress = [
+        tcp(80, 80, "59.146.77.152/32"),
+        tcp(80, 80, "202.213.251.236/32"),
+        tcp(80, 80, join("", [ ref("DeveloperIP"), "/32" ])),
+        tcp(80, 80, join("", [ ref("NATInstanceEIP"), "/32" ])),
+        tcp(80, 80, join("", [ ref("BastionInstanceEIP"), "/32" ])),
+
+        tcp(443, 443, "59.146.77.152/32"),
+        tcp(443, 443, "202.213.251.236/32"),
+        tcp(443, 443, join("", [ ref("DeveloperIP"), "/32" ])),
+        tcp(443, 443, join("", [ ref("NATInstanceEIP"), "/32" ])),
+        tcp(443, 443, join("", [ ref("BastionInstanceEIP"), "/32" ]))
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+    MySQLSecurityGroup(AWSEC2SecurityGroup) {
+      VpcId = ref("VPC")
+      GroupDescription = "Enable MySQL access via port 3306 from VPC"
+      SecurityGroupIngress = [
+        tcp(3306, 3306, refMap("StackConfig", "VPC", "CIDR"))
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+
+    NATDNSRecord(AWSRoute53RecordSet) {
+      HostedZoneName = join("", [ ref("HostedZone"), "." ])
+      Comment = "A record for the NAT instance."
+      Name = join("", [ "nat.", ref("HostedZone"), "." ])
+      Type = "A"
+      TTL = 300
+      ResourceRecords = [
+        ref("NATInstanceEIP")
+      ]
+    }
+    NATLocalDNSRecord(AWSRoute53RecordSet) {
+      HostedZoneName = join("", [ref("HostedZone"), "." ])
+      Comment = "A record for the private IP address of NAT instance."
+      Name = join("", [ "nat.local.", ref("HostedZone"), "." ])
+      Type = "A"
+      TTL = 300
+      ResourceRecords = [
+        getAtt("NATInstance", "PrivateIp")
+      ]
+    }
+    NATInstanceEIP(type: AWSEC2EIP, dependsOn: "AttachGateway") {
+      Domain = "vpc"
+      InstanceId = ref"("NATInstance")
+    }
+    NATInstance(AWSEC2Instance) {
+      InstanceType = refMap("StackConfig", "NATServer", "InstanceType")
+      KeyName = ref("KeyName")
+      SubnetId = ref("FrontendSubnet1")
+      SourceDestCheck = false
+      ImageId = refMap("AWSNATAMI", region(), "AMI")
+      IamInstanceProfile = ref("PowerUserProfile")
+      SecurityGroupIds = [
+        ref("NATSecurityGroup"),
+        ref("VPCDefaultSecurityGroup")
+      ]
+      Tags = [
+        Application: stackId(),
+        Name: "NAT",
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+    BastionDNSRecord(AWSRoute53RecordSet) {
+      HostedZoneName = join("", [ref("HostedZone"), "." ])
+      Comment = "A record for the Bastion instance."
+      Name = join("", [ "bastion.", ref("HostedZone"), "." ])
+      Type = "A"
+      TTL = 300
+      ResourceRecords = [
+        ref("BastionInstanceEIP")
+      ]
+    }
+    BastionLocalDNSRecord(AWSRoute53RecordSet) {
+      HostedZoneName = join("", [ ref("HostedZone"), "." ])
+      Comment = "A record for the private IP address of Bastion instance."
+      Name = join("", [ "bastion.local.", ref("HostedZone"), "." ])
+      Type = "A"
+      TTL = 300
+      ResourceRecords = [
+        getAtt("BastionInstance", "PrivateIp")
+      ]
+    }
+    BastionInstanceEIP(type: AWSEC2EIP, dependsOn: "AttachGateway") {
+      Domain = "vpc"
+      InstanceId = ref"("BastionInstance")
+    }
+    BastionInstance(AWSEC2Instance) {
+      InstanceType = refMap("StackConfig", "BastionServer", "InstanceType")
+      KeyName = ref("KeyName")
+      SubnetId = ref("FrontendSubnet1")
+      ImageId = refMap("AWSAmazonLinuxAMI", region(), "201309")
+      IamInstanceProfile = ref("PowerUserProfile")
+      SecurityGroupIds = [
+        ref("SSHSecurityGroup"),
+        ref("VPCDefaultSecurityGroup")
+      ]
+      Tags = [
+        Application: stackId(),
+        Name: "Bastion",
+        CmBillingGroup: "CMP"
+      ]
+    }
+
+    ApplicationErrorsTopic(AWSSNSTopic) {
+      DisplayName = "application-errors"
+    }
+
+    DatabaseDNSRecordDevelopment(AWSRoute53RecordSet) {
+      HostedZoneName = join("", [ ref("HostedZone"), "." ])
+      Comment = "CNAME for the database."
+      Name = join("", [ "rdsdev.local.", ref("HostedZone"), "." ])
+      Type = "CNAME"
+      TTL = 300
+      ResourceRecords = [
+        getAtt("DBInstance", "Endpoint.Address")
+      ]
+    }
+    DBParamGroup(AWSRDSDBParameterGroup) {
+      Description = "Default parameter group for Portnoy"
+      Family = "MySQL5.6"
+      Parameters = [
+        "character_set_database" : "utf8mb4",
+        "character_set_client" : "utf8mb4",
+        "character_set_connection" : "utf8mb4",
+        "character_set_results" : "utf8mb4",
+        "character_set_server" : "utf8mb4",
+        "sort_buffer_size" : "2097152",
+        "skip-character-set-client-handshake" : "TRUE"
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+    DBSubnetGroup(AWSRDSDBSubnetGroup) {
+      DBSubnetGroupDescription = "Database subnets for RDS"
+      SubnetIds = [
+        ref("DatabaseSubnet1"),
+        ref("DatabaseSubnet2")
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+    DBInstance(type: AWSRDSDBInstance, deletionPolicy: "Snapshot") {
+      DBInstanceClass = refMap("StackConfig", "DBServer", "InstanceType")
+      AllocatedStorage = refMap("StackConfig", "DBServer", "AllocatedStorage")
+      Engine = "MySQL"
+      MultiAZ = false
+      EngineVersion = "5.6.13"
+      MasterUsername = ref("DBUsername")
+      MasterUserPassword = ref("DBPassword")
+      DBName = refMap("StackConfig", "DBServer", "DBName")
+      BackupRetentionPeriod = 7
+      DBParameterGroupName = ref("DBParamGroup")
+      DBSubnetGroupName = ref("DBSubnetGroup")
+      PreferredBackupWindow = "19:30-20:00"
+      PreferredMaintenanceWindow = "sat:00:00-sat:00:30",
+      VpcSecurityGroups = [
+        ref("VPCDefaultSecurityGroup"),
+        ref("MySQLSecurityGroup")
+      ]
+      Tags = [
+        Application: stackId(),
+        CmBillingGroup: "CMP"
+      ]
+    }
+  }
+
+  outputs {
+    JdbcConnectionString {
+      value = join("", [
+        "jdbc:mysql://",
+        ref("DatabaseDNSRecordDevelopment"), ":",
+        getAtt("DBInstance", "Endpoint.Port"), "/",
+        refMap("StackConfig", "DBServer", "DBName")
+      ])
+      description = "-"
+    }
+    JdbcConnectionStringDevelopment {
+      value = join("", [
+        "jdbc:mysql://",
+        ref("DatabaseDNSRecordDevelopment"), ":",
+        getAtt("DBInstance", "Endpoint.Port"), "/",
+        refMap("StackConfig", "DBServer", "DBName")
+      ])
+      description = "-"
+    }
+  }
+}

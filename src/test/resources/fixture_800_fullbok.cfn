@@ -1,0 +1,508 @@
+CloudFormation {
+  Description: "fullbok - JMeter cluster CloudFormation template file."
+  Parameters {
+    KeyName = keyName()
+    AvailabilityZone = availabilityZone()
+    SSHFrom = cidr()
+    MasterInstanceAMI = amiId()
+    MasterInstanceType = instanceType()
+    SlaveInstanceType = instanceType()
+
+    SlaveCapacity {
+      Default = 2
+      Description = "Number of EC2 instances to launch for the jmeter slave."
+      Type = "Number"
+      MinValue = 1
+    }
+    SlaveSpotPrice {
+      Default = 0
+      Description = "Spot price for the jmeter slave."
+      Type = "Number"
+    }
+  }
+  Mappings {
+    AWSAmazonLinuxAMI = amazinLinuxAmi()
+    StackConfig = [
+      "VPC"          : [ "CIDR" : "10.0.0.0/16" ],
+      "JMeterSubnet" : [ "CIDR" : "10.0.0.0/24" ]
+    ]
+    SlaveInstanceSetting = [
+        "m3.xlarge"   : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m3.2xlarge"  : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m1.small"    : [ type: "64"    , HEAP: "-Xms1G -Xmx1G"     , NEW: "-XX:NewSize=256m -XX:MaxNewSize=512m" ],
+        "m1.medium"   : [ type: "64"    , HEAP: "-Xms2G -Xmx2G"     , NEW: "-XX:NewSize=512m -XX:MaxNewSize=1G"   ],
+        "m1.large"    : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m1.xlarge"   : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "c3.large"    : [ type: "64HVM" , HEAP: "-Xms2G -Xmx2G"     , NEW: "-XX:NewSize=512m -XX:MaxNewSize=1G"   ],
+        "c3.xlarge"   : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "c3.2xlarge"  : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "c3.4xlarge"  : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "c3.8xlarge"  : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "c1.medium"   : [ type: "64"    , HEAP: "-Xms1G -Xmx1G"     , NEW: "-XX:NewSize=256m -XX:MaxNewSize=512m" ],
+        "c1.xlarge"   : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "cc2.8xlarge" : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m2.xlarge"   : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m2.2xlarge"  : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "m2.4xlarge"  : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "cr1.8xlarge" : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "hi1.4xlarge" : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "hs1.8xlarge" : [ type: "64HVM" , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "t1.micro"    : [ type: "64"    , HEAP: "-Xms256M -Xmx256M" , NEW: "-XX:NewSize=128m -XX:MaxNewSize=128m" ],
+        "g2.2xlarge"  : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ],
+        "cg1.4xlarge" : [ type: "64"    , HEAP: "-Xms4G -Xmx4G"     , NEW: "-XX:NewSize=1G   -XX:MaxNewSize=2G"   ]
+    ]
+  }
+  Conditions {
+    UseSpotInstance = not(equals(ref("SlaveSpotPrice"), "0"))
+  }
+  Resources {
+    PowerUserRole("AWS::IAM::Role") {
+      Properties {
+        AssumeRolePolicyDocument {
+          Statement = [ {
+            Effect = "Allow"
+            Principal {
+              Service = [ "ec2.amazonaws.com" ]
+            }
+            Action = [ "sts:AssumeRole" ]
+          }]
+        }
+        Path = "/"
+        Policies = [ {
+          PolicyName = "PowerUserPolicy"
+          PolicyDocument {
+            Statement = [ {
+              Sid = "PowerUserStmt"
+              Effect = "Allow"
+              NotAction = "iam:*"
+              Resource = "*"
+            } ]
+          }
+        } ]
+      }
+    }
+    PowerUserProfile("AWS::IAM::InstanceProfile") {
+      Properties {
+        Path = "/"
+        Roles = [ ref("PowerUserRole") ]
+      }
+    }
+
+    VPC("AWS::EC2::VPC") {
+      Properties {
+        CidrBlock = refMap("StackConfig", "VPC", "CIDR")
+        EnableDnsHostnames = true
+        InstanceTenancy = "default"
+        Tags = [
+          ["Key" : "Application", "Value" : ref("AWS::StackId") ],
+          ["Key" : "Network", "Value" : "Public" ]
+        ]
+      }
+    }
+    InternetGateway("AWS::EC2::InternetGateway") {
+      Properties {
+        Tags = [
+          [ Key: "Application", Value: stackId() ],
+          tag("Network", "Public")
+        ]
+      }
+    }
+    AttachGateway("AWS::EC2::VPCGatewayAttachment") {
+      Properties {
+        VpcId = ref("VPC")
+        InternetGatewayId = ref("InternetGateway")
+      }
+    }
+
+    PublicRouteTable(type: "AWS::EC2::RouteTable", dependsOn: "AttachGateway") {
+      Properties {
+        VpcId = ref("VPC")
+        Tags = [
+          Application: ref("AWS::StackId"),
+          Network: "Public"
+        ]
+      }
+    }
+    PublicRoute(type: "AWS::EC2::Route", dependsOn: "AttachGateway") {
+      Properties {
+        RouteTableId = ref("PublicRouteTable")
+        DestinationCidrBlock = "0.0.0.0/0"
+        GatewayId = ref("InternetGateway")
+      }
+    }
+
+    JMeterSubnet(type: "AWS::EC2::Subnet", dependsOn : "AttachGateway") {
+      Properties {
+        VpcId = ref("VPC")
+        AvailabilityZone = ref("AvailabilityZone")
+        CidrBlock = refMap("StackConfig", "JMeterSubnet", "CIDR")
+        Tags = [
+          Application: ref("AWS::StackId"),
+          Network: "Public"
+        ]
+      }
+    }
+    JMeterSubnetRouteTableAssociation("AWS::EC2::SubnetRouteTableAssociation") {
+      Properties {
+        SubnetId = ref("JMeterSubnet")
+        RouteTableId = ref("PublicRouteTable")
+      }
+    }
+
+    VPCDefaultSecurityGroup("AWS::EC2::SecurityGroup") {
+      Properties {
+        VpcId = ref("VPC")
+        GroupDescription = "Allow all communications in VPC"
+        SecurityGroupIngress = [
+          [ IpProtocol: "tcp",  FromPort: 0,  ToPort: 65535, CidrIp: refMap("StackConfig", "VPC", "CIDR") ],
+          [ IpProtocol: "udp",  FromPort: 0,  ToPort: 65535, CidrIp: refMap("StackConfig", "VPC", "CIDR") ],
+          [ IpProtocol: "icmp", FromPort: -1, ToPort: -1,    CidrIp: refMap("StackConfig", "VPC", "CIDR") ]
+        ]
+      }
+    }
+    SSHSecurityGroup("AWS::EC2::SecurityGroup") {
+      Properties {
+        VpcId = ref("VPC")
+        GroupDescription = "Enable SSH access via port 22"
+        SecurityGroupIngress = [
+          tcp(22, ref("SSHFrom"))
+        ]
+      }
+    }
+    RDPSecurityGroup("AWS::EC2::SecurityGroup") {
+      Properties {
+        VpcId = ref("VPC")
+        GroupDescription = "Enable RDP"
+        SecurityGroupIngress = [
+          tcp(3389, ref("SSHFrom"))
+        ]
+      }
+    }
+
+    SlaveFleet("AWS::AutoScaling::AutoScalingGroup") {
+      Properties {
+        AvailabilityZones = [
+          ref("AvailabilityZone")
+        ]
+        VPCZoneIdentifier = [
+          ref("JMeterSubnet")
+        ]
+        LaunchConfigurationName = ref("SlaveInstanceLaunchConfig")
+        MinSize = ref("SlaveCapacity")
+        MaxSize = ref("SlaveCapacity")
+        DesiredCapacity = ref("SlaveCapacity")
+        Tags = [
+          [ Key: "Name",    Value: "JMeterSlave", PropagateAtLaunch: true ],
+          [ Key: "Network", Value: "Public",      PropagateAtLaunch: true ]
+        ]
+      }
+    }
+    SlaveInstanceLaunchConfig("AWS::AutoScaling::LaunchConfiguration") {
+      Properties {
+        InstanceType = ref("SlaveInstanceType")
+        SpotPrice = cfnif("UseSpotInstance", ref("SlaveSpotPrice"), noValue())
+        KeyName = ref("KeyName")
+        ImageId = refMap("AWSAmazonLinuxAMI", region(), refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "type"))
+        SecurityGroups = [
+          ref("SSHSecurityGroup"),
+          ref("VPCDefaultSecurityGroup")
+        ]
+        IamInstanceProfile = ref("PowerUserProfile")
+        InstanceMonitoring = false
+        AssociatePublicIpAddress = true
+        UserData = base64(join("", [
+          "#! /bin/bash -v", /\n/,
+          "yum update -y", /\n/,
+
+          "# Helper function", /\n/,
+          "function error_exit", /\n/,
+          "{", /\n/,
+          "  /opt/aws/bin/cfn-signal -e 1 -r \"", '$1', "\" '", ref("SlaveWaitHandle"), "'", /\n/,
+          "  exit 1", /\n/,
+          "}", /\n/,
+
+          "# Install packages", /\n/,
+          "/opt/aws/bin/cfn-init -v -s ", ref("AWS::StackId"), " -r SlaveInstanceLaunchConfig ",
+          "    --region ", ref("AWS::Region"), /\n/,
+
+          "sysctl -p", /\n/,
+
+          "echo \"/opt/apache-jmeter-2.10/bin/jmeter-server | logger -p daemon.info &\" >>/etc/rc.local", /\n/,
+
+          "# All is well so signal success", /\n/,
+          "/opt/aws/bin/cfn-signal -e ", '$?', " -r \"SlaveInstanceLaunchConfig setup complete\" '", ref("SlaveWaitHandle"), "'", /\n/
+        ]))
+      }
+      Metadata("AWS::CloudFormation::Init") {
+        config {
+          packages {
+            yum = [
+              "java-1.7.0-openjdk-devel": []
+            ]
+          }
+          sources = [
+            "/opt": "http://ftp.riken.jp/net/apache/jmeter/binaries/apache-jmeter-2.10.tgz"
+          ]
+          files {
+            "/etc/security/limits.conf" {
+              content = join("", [
+                "# /etc/security/limits.conf", /\n/,
+                "#", /\n/,
+                "#Each line describes a limit for a user in the form:", /\n/,
+                "#", /\n/,
+                "#", /\n/,
+                "#<domain>      <type>  <item>         <value>", /\n/,
+                "#", /\n/,
+                /\n/,
+                "#*               soft    core            0", /\n/,
+                "#*               hard    rss             10000", /\n/,
+                "#@student        hard    nproc           20", /\n/,
+                "#@faculty        soft    nproc           20", /\n/,
+                "#@faculty        hard    nproc           50", /\n/,
+                "#ftp             hard    nproc           0", /\n/,
+                "#@student        -       maxlogins       4", /\n/,
+                /\n/,
+                /\n/,
+                "*                hard   nofile           65536", /\n/,
+                "*                soft   nofile           65536", /\n/,
+                "*                hard   nproc            8192", /\n/,
+                "*                soft   nproc            8192", /\n/,
+                /\n/,
+                /\n/,
+                /\n/,
+                "# End of file", /\n/
+              ])
+              mode = "000644"
+              owner = "root"
+              group = "root"
+            }
+          }
+          commands {
+            "00-use_java7" {
+              command = "alternatives --set java /usr/lib/jvm/jre-1.7.0-openjdk.x86_64/bin/java"
+            }
+            "01-create_hosts_entry-on_boot" {
+              command = "echo \"`curl -s curl http://169.254.169.254/latest/meta-data/local-ipv4` `hostname`\" >>/etc/hosts"
+              test = "test ! -f .create_hosts_entry-semaphore"
+            }
+            "02-signal_startup_complete" {
+              command = "touch .create_hosts_entry-semaphore"
+            }
+            "03-set_listen_address" {
+              command = join("", [
+                'sed -i -e "s/^#RMI_HOST_DEF=-Djava.rmi.server.hostname=.*$/RMI_HOST_DEF=-Djava.rmi.server.hostname=$(curl -s http://169.254.169.254/latest/meta-data/local-hostname)/" /opt/apache-jmeter-2.10/bin/jmeter-server'
+              ])
+            }
+            "03-set_heap" {
+              command = join("", [
+                "sed -i -e \"s/^HEAP/#HEAP/ \" -e \" /^#HEAP/i HEAP=\\\"" , refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "HEAP"), "\\\" \" /opt/apache-jmeter-2.10/bin/jmeter"
+              ])
+            }
+            "03-set_new" {
+              command = join("", [
+                "sed -i -e \"s/^NEW/#NEW/ \" -e \" /^#NEW/i NEW=\\\"" , refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "NEW"), "\\\" \" /opt/apache-jmeter-2.10/bin/jmeter"
+              ])
+            }
+            "04-tcp_param_tcp_tw_recycle" {
+              command = "echo \"net.ipv4.tcp_tw_recycle = 1\" >> /etc/sysctl.conf"
+            }
+            "04-tcp_param_tcp_fin_timeout" {
+              command = "echo \"net.ipv4.tcp_fin_timeout = 1\" >> /etc/sysctl.conf"
+            }
+            "05-nproc_limit" {
+              command = "sed -i -e \"s/ nproc     1024/ nproc     8192/\" /etc/security/limits.d/90-nproc.conf"
+            }
+          }
+        }
+      }
+    }
+    SlaveWaitHandle("AWS::CloudFormation::WaitConditionHandle")
+    SlaveWaitCondition(type: "AWS::CloudFormation::WaitCondition", dependsOn: "SlaveFleet") {
+      Properties {
+        Handle = ref("SlaveWaitHandle")
+        Timeout = 3600
+        Count = ref("SlaveCapacity")
+      }
+    }
+
+    MasterInstance("AWS::EC2::Instance") {
+      Properties {
+        InstanceType = ref("MasterInstanceType")
+        ImageId = ref("MasterInstanceAMI")
+        NetworkInterfaces = [{
+          DeviceIndex = 0
+          AssociatePublicIpAddress = true
+          DeleteOnTermination = true
+          SubnetId = ref("JMeterSubnet")
+          GroupSet = [
+            ref("RDPSecurityGroup"),
+            ref("VPCDefaultSecurityGroup")
+          ]
+        }]
+        KeyName = ref("KeyName")
+        IamInstanceProfile = ref("PowerUserProfile")
+        Monitoring = false
+        Tags = [
+          [ "Key" : "Name", "Value" : "JMeterMaster" ],
+          [ "Key" : "Network", "Value" : "Public" ]
+        ]
+        UserData = base64(join("", [
+          "<powershell>", /\n/,
+          "cfn-init.exe -v -s ", ref("AWS::StackId"), " -r MasterInstance -c create --region ", ref("AWS::Region"), /\n/,
+          'cfn-signal.exe -e $lastexitcode ', base64(ref("MasterWaitHandle")), /\n/,
+          "</powershell>"
+        ]))
+      }
+      Metadata("AWS::CloudFormation::Init") {
+        configSets {
+          create = [
+            "setup_cfn_hup",
+            "place_scripts",
+            "install_jdk",
+            "disable_firewall",
+            "install_jmeter",
+            "setup_jmeter"
+          ]
+          update = [
+            "setup_jmeter"
+          ]
+        }
+        "setup_cfn_hup" {
+          files {
+            "c:\\cfn\\cfn-hup.conf" {
+              content = join("", [
+                "[main]", /\n/,
+                "stack=", ref("AWS::StackId"), /\n/,
+                "region=", ref("AWS::Region"), /\n/,
+              ])
+            }
+            "c:\\cfn\\hooks.d\\cfn-auto-reloader.conf" {
+              content = join("", [
+                "[cfn-auto-reloader-hook]", /\n/,
+                "triggers=post.update", /\n/,
+                "path=Resources.MasterInstance.Metadata.AWS::CloudFormation::Init", /\n/,
+                "action=cfn-init.exe -v -s ", ref("AWS::StackId"), " -r MasterInstance -c update --region ", ref("AWS::Region"), /\n/
+              ])
+            }
+          }
+          services {
+            windows {
+              "cfn-hup" {
+                enabled = true
+                ensureRunning = true
+                files = [
+                  "c:\\cfn\\cfn-hup.conf",
+                  "c:\\cfn\\hooks.d\\cfn-auto-reloader.conf"
+                ]
+              }
+            }
+          }
+        }
+        "place_scripts" {
+          files {
+            "c:\\install_jdk.ps1" {
+              content = join("", [
+                '$client = new-object System.Net.WebClient', /\n/,
+                '$client.Headers.add("Cookie", "gpw_e24=http%3A%2F%2Fwww.oracle.com")', /\n/,
+                '$client.DownloadFile("http://download.oracle.com/otn-pub/java/jdk/7u45-b18/jdk-7u45-windows-x64.exe", "C:\\Users\\Administrator\\jdk.exe")', /\n/,
+                'C:\\Users\\Administrator\\jdk.exe /s /lang=1041 INSTALLDIR=C:\\java\\jdk1.7.45', /\n/,
+                '$env:PATH = $env:PATH + ";C:\\java\\jdk1.7.45\\bin"'
+              ])
+            }
+            "c:\\create_shortcut.ps1" {
+              content = join("", [
+                '$WshShell = New-Object -comObject WScript.Shell', /\n/,
+                '$shortcut = $WshShell.CreateShortcut("C:\\Users\\Administrator\\Desktop\\JMeter.lnk")', /\n/,
+                '$shortcut.TargetPath = "C:\\jmeter\\apache-jmeter-2.10\\bin\\jmeterw.cmd"', /\n/,
+                '$shortcut.WorkingDirectory = "C:\\jmeter\\apache-jmeter-2.10\\bin"', /\n/,
+                '$shortcut.Save()', /\n/
+              ])
+            }
+            "c:\\setupjmetercluster.ps1" {
+              content = join("", [
+                'Set-DefaultAWSRegion ', ref("AWS::Region"), /\n/,
+                '$slaves = (Get-ASAutoScalingInstance',
+                ' | ? {$_.AutoScalingGroupName -eq "', ref("SlaveFleet"), '"}',
+                ' | select -ExpandProperty InstanceId',
+                ' | Get-EC2Instance',
+                ' | select -ExpandProperty RunningInstance',
+                " | select -ExpandProperty PrivateIpAddress) -join ','", /\n/,
+                '(Get-Content "C:\\jmeter\\apache-jmeter-2.10\\bin\\jmeter.properties")',
+                ' | Foreach-Object {$_ -replace \'^remote_hosts=.*$\', ("remote_hosts=" + $slaves)}',
+                ' | Set-Content "C:\\jmeter\\apache-jmeter-2.10\\bin\\jmeter.properties"'
+              ])
+            }
+            "c:\\updatejmeter.ps1" {
+              content = join("", [
+                '(Get-Content "C:\\jmeter\\apache-jmeter-2.10\\bin\\jmeter.bat") ',
+                ' | Foreach-Object {$_ -replace \'^set HEAP=.*$\', ("set HEAP=', refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "HEAP"), '")} ',
+                ' | Foreach-Object {$_ -replace \'^set NEW=.*$\', ("set NEW=',   refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "NEW"),  '")} ',
+                ' | Set-Content "C:\\jmeter\\apache-jmeter-2.10\\bin\\jmeter.bat"'
+              ])
+            }
+          }
+        }
+        "install_jdk" {
+          commands {
+            "install_jdk" {
+              command = "powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -WindowStyle Hidden -File c:\\install_jdk.ps1"
+            }
+          }
+        }
+        "disable_firewall" {
+          commands {
+            "disable_firewall" {
+              command = "netsh advfirewall set allprofiles state off"
+            }
+          }
+        }
+        "install_jmeter" {
+          sources = [
+            "c:\\jmeter": "http://ftp.riken.jp/net/apache/jmeter/binaries/apache-jmeter-2.10.zip"
+          ]
+          commands {
+            "create_shortcut" {
+              command = "powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -WindowStyle Hidden -File c:\\create_shortcut.ps1"
+            }
+          }
+        }
+        "setup_jmeter" {
+          commands {
+            "setup_jmeter_cluster" {
+              command = "powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -WindowStyle Hidden -File c:\\setupjmetercluster.ps1"
+            }
+          }
+        }
+        "setup_jmeter_jvm" {
+          commands {
+            "setup_jmeter_jvm_param" {
+              command = "powershell.exe -ExecutionPolicy Bypass -NoLogo -NonInteractive -NoProfile -WindowStyle Hidden -File c:\\updatejmeter.ps1"
+            }
+          }
+        }
+      }
+    }
+    MasterWaitHandle("AWS::CloudFormation::WaitConditionHandle")
+    MasterWaitCondition(type: "AWS::CloudFormation::WaitCondition", dependsOn: "MasterInstance") {
+      Properties {
+        Handle = ref("MasterWaitHandle")
+        Timeout = 3600
+      }
+    }
+  }
+
+  Outputs {
+    SSHToSlaveInstances {
+      Value = join("", [
+        "ssh -i /path/to/", ref("KeyName"), ".pem ec2-user@<ip/hostname>"
+      ])
+      Description = "SSH command to connect to the JMeter slave instances."
+    }
+    RDPToMasterInstance {
+      Value = join("", [
+        "remotedesktop://", getAtt("MasterInstance", "PublicDnsName")
+      ])
+      Description = "RDP connection to the JMeter master."
+    }
+  }
+}
