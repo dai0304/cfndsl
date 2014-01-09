@@ -53,7 +53,7 @@ CloudFormation {
     ]
   }
   Conditions {
-    UseSpotInstance = not(equals(ref("SlaveSpotPrice"), "0"))
+    UseSpotInstance = fnNot(fnEquals(ref("SlaveSpotPrice"), "0"))
   }
   Resources {
     PowerUserRole("AWS::IAM::Role") {
@@ -200,7 +200,7 @@ CloudFormation {
     SlaveInstanceLaunchConfig("AWS::AutoScaling::LaunchConfiguration") {
       Properties {
         InstanceType = ref("SlaveInstanceType")
-        SpotPrice = cfnif("UseSpotInstance", ref("SlaveSpotPrice"), noValue())
+        SpotPrice = fnIf("UseSpotInstance", ref("SlaveSpotPrice"), noValue())
         KeyName = ref("KeyName")
         ImageId = refMap("AWSAmazonLinuxAMI", region(), refMap("SlaveInstanceSetting", ref("SlaveInstanceType"), "type"))
         SecurityGroups = [

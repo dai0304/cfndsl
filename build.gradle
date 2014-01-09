@@ -20,6 +20,8 @@ ext {
 	awsJavaSdkVersion = "1.6.8"
 }
 
+defaultTasks 'clean', 'jar'
+
 sourceCompatibility = targetCompatibility = 1.7
 tasks.withType(AbstractCompile) each {
 	it.options.encoding = ext.defaultEncoding

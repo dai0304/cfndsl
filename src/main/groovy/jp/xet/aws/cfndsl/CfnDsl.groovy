@@ -7,27 +7,28 @@ import org.codehaus.groovy.control.CompilerConfiguration
 class CfnDsl {
 	
 	static void main(String[] args) {
-		def json = new CfnDsl().runCfnDsl(new File(args.length == 0 ? "default.cfn" : args[0]))
-		println JsonOutput.prettyPrint(json)
+		if (args) {
+			def json = new CfnDsl().runCfnDsl(new File(args[0]))
+			println JsonOutput.prettyPrint(json)
+		} else {
+			println "Usage: cfndsl <script>"
+		}
 	}
 	
 	def runCfnDsl(File dsl) {
-		def config = new CompilerConfiguration();
-		config.scriptBaseClass = CfnDslScriptBase.class.name
-		def shell = new GroovyShell(config);
-		
-		def parsed = new NodeBuilder().root(shell.evaluate("{ -> ${dsl.text} }"))
+		def parsed = new NestedMapBuilder().parse(dsl.text)
 		buildJson(parsed)
 	}
 	
-	def buildJson(root) {
-		def cfn = root.CloudFormation
+	def buildJson(cfn) {
+		println cfn
+		
 		def builder = new JsonBuilder()
 		
 		builder {
-			"AWSTemplateFormatVersion" (cfn.AWSTemplateFormatVersion?.text() ?: "2010-09-09")
-			if (cfn.Description?.text()) {
-				"Description" (cfn.Description?.text())
+			"AWSTemplateFormatVersion" (cfn.AWSTemplateFormatVersion ?: "2010-09-09")
+			if (cfn.Description) {
+				"Description" (cfn.Description)
 			}
 			// TODO
 		}
